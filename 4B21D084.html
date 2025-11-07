@@ -1,0 +1,348 @@
+
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>網頁鋼琴 — 直接可用的 Piano Keyboard</title>
+<style>
+  :root{
+    --white-key-width: 56px;
+    --white-key-height: 220px;
+    --black-key-width: 34px;
+    --black-key-height: 140px;
+    --gap: 2px;
+    --kbd-bg: #111;
+  }
+  html,body{height:100%;margin:0;font-family:system-ui,-apple-system,'Noto Sans TC',Segoe UI, Roboto, "Helvetica Neue";background:linear-gradient(180deg,#0b1220,#071025);color:#e8eef8;display:flex;align-items:center;justify-content:center;}
+  .container{width:100%;max-width:980px;padding:18px;}
+  h1{margin:6px 0 4px;font-size:20px;text-align:center;}
+  p.lead{margin:0 0 16px;text-align:center;color:#cfe0ffcc;}
+  .keyboard{position:relative;user-select:none;height:var(--white-key-height);display:flex;align-items:flex-end;border-radius:8px;padding:12px;background:rgba(255,255,255,0.02);box-shadow:0 6px 24px rgba(2,8,23,0.6);overflow:hidden;}
+  .keys{display:flex;position:relative;z-index:1;}
+  .key{position:relative;border:1px solid rgba(0,0,0,0.15);box-sizing:border-box;display:flex;align-items:flex-end;justify-content:center;font-size:12px;cursor:pointer;touch-action:none;}
+  .white{width:var(--white-key-width);height:var(--white-key-height);background:linear-gradient(#fff,#f3f3f3);border-radius:4px;margin-right:var(--gap);box-shadow:inset 0 -6px 10px rgba(0,0,0,0.06);color:#111;}
+  .white.active{background:linear-gradient(#ffe, #fff8c8);transform:translateY(4px);box-shadow:inset 0 -3px 8px rgba(0,0,0,0.04);}
+  .black{width:var(--black-key-width);height:var(--black-key-height);background:linear-gradient(#111,#000);position:absolute;z-index:2;margin-left:-var(--black-key-width)/2;border-radius:4px;color:#fff;box-shadow:0 4px 10px rgba(0,0,0,0.6);}
+  .black.active{background:linear-gradient(#333,#111);transform:translateY(6px);}
+  .label{padding:6px 4px;background:transparent;border-radius:4px;margin-bottom:8px;}
+  .controls{display:flex;gap:10px;align-items:center;justify-content:center;margin-top:14px;flex-wrap:wrap;}
+  .btn{background:#0b74ff11;border:1px solid rgba(11,116,255,0.12);color:#bfe0ff;padding:8px 12px;border-radius:8px;cursor:pointer;}
+  .kbdmap{font-size:13px;color:#c9dff8aa;}
+  .footer{margin-top:12px;text-align:center;color:#9fb8d8cc;font-size:13px;}
+  .info{background:rgba(255,255,255,0.02);padding:12px;border-radius:8px;margin-bottom:12px;color:#cfe6ffdd;}
+  @media (max-width:860px){
+    :root{--white-key-width:44px;--white-key-height:180px;--black-key-width:26px;--black-key-height:110px;}
+  }
+  @media (max-width:520px){
+    :root{--white-key-width:36px;--white-key-height:150px;--black-key-width:22px;--black-key-height:94px;}
+    h1{font-size:18px;}
+  }
+</style>
+</head>
+<body>
+<div class="container" role="main">
+  <h1>網頁鋼琴 - 直接在瀏覽器播放（兩個八度）</h1>
+  <p class="lead">點擊或按鍵盤鍵就能發聲。使用 Web Audio API 合成聲音，不需外連資源，支援滑鼠、觸控與電腦鍵盤。</p>
+
+  <div class="info">
+    操作說明：<br>
+    • 用滑鼠或手指點擊琴鍵播放音符。<br>
+    • 使用電腦鍵盤快速鍵：第 1 排 (z → m) 為低音 C4~B4；第 2 排 (a → l) 為高音 C5~B5。<br>
+    • 可調整音量與波形（合成器類型）、以及開關 sustain（延音）。
+  </div>
+
+  <div class="keyboard" id="keyboard" aria-label="虛擬鋼琴鍵盤">
+    <div class="keys" id="keys"></div>
+  </div>
+
+  <div class="controls">
+    <div>
+      <label for="volume">音量</label>
+      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.3">
+    </div>
+    <div>
+      <label for="wave">波形</label>
+      <select id="wave">
+        <option value="sine">Sine</option>
+        <option value="triangle" selected>Triangle</option>
+        <option value="square">Square</option>
+        <option value="sawtooth">Sawtooth</option>
+      </select>
+    </div>
+    <div>
+      <label><input type="checkbox" id="sustain"> Sustain</label>
+    </div>
+    <div class="kbdmap">鍵盤對應： z x c v b n m , . /  和 a s d f g h j k l ; '</div>
+    <button class="btn" id="downloadBtn">下載 HTML 檔案</button>
+  </div>
+
+  <div class="footer">此檔案為純前端頁面；若要在本機使用，只要將此 .html 檔案開啟於瀏覽器即可。</div>
+</div>
+
+<script>
+// Piano data: build two octaves C4 (MIDI 60) ~ B5 (MIDI 83)
+const noteNames = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+function midiToFreq(m){
+  return 440 * Math.pow(2,(m-69)/12);
+}
+// choose MIDI numbers for two octaves: 60..83 inclusive
+const keys = [];
+for(let m=60;m<=83;m++){ const name = noteNames[m%12]+Math.floor(m/12); keys.push({midi:m, name}); }
+
+// keyboard mapping (computer keyboard) - cover same #keys (24)
+// we'll map row1 (lower) and row2 (higher)
+const keyMapLower = ['z','s','x','d','c','v','g','b','h','n','j','m']; // chromatic mapping low octave (12)
+const keyMapHigher = ['q','2','w','3','e','r','5','t','6','y','7','u']; // alternate with number row for sharps
+// But user asked z..m and a..l - create convenient mapping for natural keys
+const simpleLower = ['z','x','c','v','b','n','m',',','.','/']; // 10 natural-ish - but we have 24 keys; we'll map more comprehensively below
+
+// We'll create mapping that prefers simple rows: lower row z..m (12), home row a..l (12)
+const computerMap = [
+  'z','x','c','v','b','n','m',',','.','/','q','2' // filler for complete 12, will be adjusted below
+];
+
+// Instead: map first 12 keys to z -> m plus punctuation, and next 12 to a -> ; and '.
+const mappings = {};
+const lowRow = ['z','x','c','v','b','n','m',',','.','/',';','\'','\\']; // extended (some may not exist)
+const highRow = ['a','s','d','f','g','h','j','k','l',';','\'','\\','/'];
+// To ensure a stable mapping that works on most keyboards, use two rows: z x c v b n m , . / and a s d f g h j k l ; '
+// We'll map first 12 -> z x c v b n m , . / ? and next 12 -> a s d f g h j k l ; ' [some duplicates ignored]
+const row1 = ['z','x','c','v','b','n','m',',','.','/','q','w']; // fill to 12
+const row2 = ['a','s','d','f','g','h','j','k','l',';','\'','\\'];
+
+for(let i=0;i<keys.length;i++){
+  const k = i<12 ? row1[i] : row2[i-12];
+  mappings[k] = keys[i].midi;
+}
+
+// Build UI keys
+const keysContainer = document.getElementById('keys');
+const blackPositions = [1,3,6,8,10]; // black keys positions in a 12-key octave
+keys.forEach((k, idx)=>{
+  const tone = k.name.replace(/\d+/,''); // e.g. C#
+  const isSharp = tone.includes('#');
+  if(!isSharp){
+    const div = document.createElement('div');
+    div.className = 'key white';
+    div.dataset.midi = k.midi;
+    div.tabIndex = 0;
+    div.innerHTML = `<div class="label">${k.name}</div>`;
+    keysContainer.appendChild(div);
+    div.addEventListener('pointerdown', onPointerDown);
+    div.addEventListener('pointerup', onPointerUp);
+    div.addEventListener('pointerleave', onPointerUp);
+    div.addEventListener('touchstart', onPointerDown,{passive:false});
+    div.addEventListener('touchend', onPointerUp);
+  }
+});
+
+// position black keys absolutely
+let whiteIndex = 0;
+for(let octave=0; octave<2; octave++){
+  for(let i=0;i<12;i++){
+    const midi = 60 + octave*12 + i;
+    const name = noteNameOf(midi);
+    if(name.includes('#')){
+      // create element
+      const black = document.createElement('div');
+      black.className = 'key black';
+      black.dataset.midi = midi;
+      black.innerHTML = `<div class="label">${name}</div>`;
+      // position: calculate left based on whiteIndex
+      const left = (whiteIndex - 1) * (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--white-key-width')) || 56) + (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--white-key-width')) || 56) * 0.65;
+      black.style.left = `calc(${( (whiteIndex) * (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--white-key-width')) || 56) )}px - ${ (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--black-key-width')) || 34) / 2 }px )`;
+      // Instead of complex calc, we'll position after render using offset of white keys
+      keysContainer.appendChild(black);
+      black.addEventListener('pointerdown', onPointerDown);
+      black.addEventListener('pointerup', onPointerUp);
+      black.addEventListener('pointerleave', onPointerUp);
+      black.addEventListener('touchstart', onPointerDown,{passive:false});
+      black.addEventListener('touchend', onPointerUp);
+    } else {
+      whiteIndex++;
+    }
+  }
+}
+
+// After layout, position black keys more accurately
+function positionBlackKeys(){
+  const whiteKeys = Array.from(document.querySelectorAll('.key.white'));
+  const blackKeys = Array.from(document.querySelectorAll('.key.black'));
+  // map black keys to be between adjacent white keys based on midi
+  blackKeys.forEach(bk=>{
+    const midi = +bk.dataset.midi;
+    // find left white key whose midi is midi-1 or midi-2
+    const leftWhite = whiteKeys.find(w=> +w.dataset.midi < midi && (+w.dataset.midi + 2) > midi);
+    if(leftWhite){
+      const rect = leftWhite.getBoundingClientRect();
+      const parentRect = keysContainer.getBoundingClientRect();
+      const left = leftWhite.offsetLeft + rect.width - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--black-key-width')) || 34)/2 - 8;
+      bk.style.left = left + 'px';
+    }
+  });
+}
+
+// Provide audio via WebAudio API (synthesis)
+let audioCtx = null;
+const masterGain = {gainNode:null};
+const activeVoices = new Map();
+
+function ensureAudio(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain.gainNode = audioCtx.createGain();
+  masterGain.gainNode.gain.value = Number(document.getElementById('volume').value)||0.3;
+  masterGain.gainNode.connect(audioCtx.destination);
+}
+
+document.getElementById('volume').addEventListener('input', e=>{
+  if(masterGain.gainNode) masterGain.gainNode.gain.value = Number(e.target.value);
+});
+
+document.getElementById('wave').addEventListener('change', e=>{/* nothing to do, picked on play */});
+document.getElementById('sustain').addEventListener('change', e=>{/* handled in release*/});
+
+function playMidi(midi){
+  ensureAudio();
+  const now = audioCtx.currentTime;
+  const wave = document.getElementById('wave').value || 'triangle';
+  const vol = Number(document.getElementById('volume').value) || 0.3;
+  const sustainOn = document.getElementById('sustain').checked;
+  const freq = midiToFreq(midi);
+
+  // Create layered oscillators to mimic richer timbre
+  const osc1 = audioCtx.createOscillator();
+  const osc2 = audioCtx.createOscillator();
+  const osc3 = audioCtx.createOscillator();
+  osc1.type = wave; osc2.type = 'sine'; osc3.type = 'sine';
+  osc2.detune.value = 6; osc3.detune.value = -5;
+
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.0001;
+
+  osc1.frequency.value = freq;
+  osc2.frequency.value = freq*2; // harmonic
+  osc3.frequency.value = freq*0.5;
+
+  osc1.connect(gain); osc2.connect(gain); osc3.connect(gain);
+  gain.connect(masterGain.gainNode);
+
+  const attack = 0.003;
+  const decay = 0.25;
+  const sustainLevel = 0.5;
+  const release = sustainOn ? 2.0 : 0.6;
+
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(vol, now+Math.max(attack,0.001));
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.0001,vol*sustainLevel), now+attack+decay);
+
+  osc1.start(now); osc2.start(now); osc3.start(now);
+
+  const voice = {osc1,osc2,osc3,gain,release,started:now};
+  activeVoices.set(midi, voice);
+}
+
+// stop note (unless sustain on)
+function stopMidi(midi){
+  const voice = activeVoices.get(midi);
+  if(!voice) return;
+  const now = audioCtx.currentTime;
+  const sustainOn = document.getElementById('sustain').checked;
+  const r = sustainOn ? voice.release : 0.4;
+  voice.gain.gain.cancelScheduledValues(now);
+  voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
+  voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + r);
+  try{
+    voice.osc1.stop(now + r + 0.05);
+    voice.osc2.stop(now + r + 0.05);
+    voice.osc3.stop(now + r + 0.05);
+  }catch(e){}
+  setTimeout(()=>{ try{ voice.gain.disconnect(); }catch(e){} }, (r+0.05)*1000 + 50);
+  activeVoices.delete(midi);
+}
+
+// UI handlers
+function onPointerDown(e){
+  e.preventDefault();
+  const midi = +this.dataset.midi;
+  this.classList.add('active');
+  playMidi(midi);
+}
+function onPointerUp(e){
+  e.preventDefault();
+  const midi = +this.dataset.midi;
+  this.classList.remove('active');
+  stopMidi(midi);
+}
+
+// keyboard support: map chosen keys to midi
+const kbToMidi = mappings; // created above
+window.addEventListener('keydown', (e)=>{
+  if(e.repeat) return;
+  const k = e.key.toLowerCase();
+  const midi = kbToMidi[k];
+  if(midi){
+    // find element
+    const el = document.querySelector(`.key[data-midi="${midi}"]`);
+    if(el) el.classList.add('active');
+    playMidi(midi);
+    // prevent page scrolling for space etc
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', (e)=>{
+  const k = e.key.toLowerCase();
+  const midi = kbToMidi[k];
+  if(midi){
+    const el = document.querySelector(`.key[data-midi="${midi}"]`);
+    if(el) el.classList.remove('active');
+    stopMidi(midi);
+  }
+});
+
+// utility to get note name
+function noteNameOf(m){
+  return noteNames[m%12] + Math.floor(m/12);
+}
+
+// make keys focusable for accessibility: assign midi to white keys already, but add midi dataset to white keys earlier
+(function finalize(){
+  // set dataset for white keys (we only added white divs earlier without midi; fix here)
+  const whiteEls = document.querySelectorAll('.key.white');
+  let wIdx = 0;
+  for(let m=60;m<=83;m++){
+    const name = noteNameOf(m);
+    if(!name.includes('#')){
+      const el = whiteEls[wIdx];
+      el.dataset.midi = m;
+      wIdx++;
+    }
+  }
+  // now we also need black keys' label positions (we already added them)
+  // reposition black keys after render
+  setTimeout(positionBlackKeys, 80);
+})();
+
+// download functionality: the page can save itself as an HTML file
+document.getElementById('downloadBtn').addEventListener('click', ()=>{
+  const doctype = '<!doctype html>\\n';
+  const html = doctype + document.documentElement.outerHTML;
+  const blob = new Blob([html], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'web_piano.html';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+// ensure audio context unlock on first pointer
+window.addEventListener('pointerdown', ()=>{ ensureAudio(); }, {once:true});
+window.addEventListener('touchstart', ()=>{ ensureAudio(); }, {once:true});
+</script>
+</body>
+</html>
